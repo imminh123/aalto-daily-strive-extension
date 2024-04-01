@@ -1,6 +1,12 @@
 const baseUrl = "https://api.mby.vn/api/oversea-ordering";
 var globalRate;
 var token;
+let initExtensionInterval;
+
+const TAOBAO_TYPE = {
+  TAOBAO: "TAOBAO",
+  TMALL: "TMALL",
+};
 
 chrome.storage.local.get("aaltoToken", (result) => {
   token = result.aaltoToken;
@@ -28,7 +34,8 @@ function showToast(success) {
 }
 
 function updateTMallItemPrice(rate) {
-  setTimeout(() => {
+  let isFoundDOM = false;
+  const foundDOM = setInterval(() => {
     const regex = /(Price--priceText-.*)|(tb-rmb-num)/;
     const elements = document.querySelectorAll("*");
 
@@ -42,15 +49,19 @@ function updateTMallItemPrice(rate) {
 
     const newPrice = matchingElements[0].innerHTML;
     if (!!newPrice && quantity) {
+      isFoundDOM = true;
       document.getElementById("taobao-gia-ban").innerHTML = formatMoneyToVND(
         +newPrice * +rate * +quantity
       );
     }
-  }, 200);
+  }, 500);
+
+  if (isFoundDOM) clearInterval(foundDOM);
 }
 
 function updateTaobaoItemPrice(rate) {
-  setTimeout(() => {
+  let isFoundDOM = false;
+  const foundDOM = setInterval(() => {
     const oldPrice = document.querySelectorAll(".tb-property-cont .tb-rmb-num");
     const salePrice = document.querySelectorAll(
       ".tb-promo-price #J_PromoPriceNum"
@@ -59,13 +70,16 @@ function updateTaobaoItemPrice(rate) {
     const quantity = document.getElementById("J_IptAmount").value;
 
     if (!!showPrice.length) {
+      isFoundDOM = true;
       const newPrice = showPrice[0].innerHTML
         .split("-")
         .map((e) => formatMoneyToVND(e * rate * +quantity))
         .join("-");
       document.getElementById("taobao-gia-ban").innerHTML = newPrice;
     }
-  }, 200);
+  }, 500);
+
+  if (isFoundDOM) clearInterval(foundDOM);
 }
 
 function fetchExchangeRate() {
@@ -78,14 +92,7 @@ function fetchExchangeRate() {
   })
     .then((response) => response.json())
     .then((data) => {
-      const exRate = data[0].value;
-      const exchangeElement = document.getElementById("taobao-ti-gia");
-      if (exchangeElement) {
-        exchangeElement.innerHTML = exRate;
-      }
-      globalRate = exRate;
-      updateTaobaoItemPrice(exRate);
-      updateTMallItemPrice(exRate);
+      globalRate = data[0].value;
     })
     .catch((error) => {
       console.error("Error:", error);
@@ -183,26 +190,79 @@ function purchase() {
   window.open("https://app.mby.vn/cart", "_blank").focus();
 }
 
+function scanDOM() {
+  let elementsTMallForMountExtension;
+  let elementsTaobaoForMountExtension;
+  let type;
+
+  // Scan DOM Ver 2
+  elementsTMallForMountExtension = document.querySelectorAll(
+    '[class^="BasicContent--sku"]'
+  );
+  elementsTaobaoForMountExtension =
+    document.querySelectorAll('[class^="tb-skin"]');
+
+  // Map type
+  if (elementsTMallForMountExtension) {
+    type = TAOBAO_TYPE.TMALL;
+  } else if ((type = TAOBAO_TYPE.TAOBAO)) {
+    type = TAOBAO_TYPE.TAOBAO;
+  }
+
+  /*
+  - Check whether extension being mounted successfully or not
+  - If succeed, clear interval
+  */
+
+  //  // Scan DOM Ver 1
+  //  const elements = document.querySelectorAll("*");
+  //  const regexTaobaoItem = /tb-skin*/;
+  //  const regexTmall = /BasicContent--sku.*/;
+
+  //  elementsTaobaoForMountExtension = Array.from(elements).filter((element) => {
+  //    return Array.from(element.classList).some((className) =>
+  //      regexTaobaoItem.test(className)
+  //    );
+  //  })[0];
+
+  //  elementsTMallForMountExtension = Array.from(elements).filter((element) => {
+  //    return Array.from(element.classList).some((className) =>
+  //      regexTmall.test(className)
+  //    );
+  //  })[0];
+
+  if (
+    !!elementsTMallForMountExtension.length ||
+    !!elementsTaobaoForMountExtension.length
+  ) {
+    return {
+      element:
+        elementsTMallForMountExtension[0] || elementsTaobaoForMountExtension[0],
+      type,
+    };
+  }
+
+  return null;
+}
+
+function numberWithCommas(x) {
+  return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
 function main() {
-  setTimeout(() => {
+  if (!globalRate) {
     fetchExchangeRate();
-  }, 200);
+    return;
+  }
+  const domElementMountExtension = scanDOM();
+  console.log(
+    "🚀 ~ main ~ domElementMountExtension:",
+    domElementMountExtension
+  );
+  if (domElementMountExtension) {
+    clearInterval(initExtensionInterval);
+  } else return;
 
-  const elements = document.querySelectorAll("*");
-
-  const regexTaobaoItem = /tb-skin*/;
-  const regexTmall = /BasicContent--sku.*/;
-
-  const varientContainerItem = Array.from(elements).filter((element) => {
-    return Array.from(element.classList).some((className) =>
-      regexTaobaoItem.test(className)
-    );
-  })[0];
-  const varientContainerTmall = Array.from(elements).filter((element) => {
-    return Array.from(element.classList).some((className) =>
-      regexTmall.test(className)
-    );
-  })[0];
   const customActionsContainer = document.createElement("div");
   customActionsContainer.style.maxWidth = "450px";
   customActionsContainer.style.fontFamily = "system-ui";
@@ -213,7 +273,9 @@ function main() {
     <img style=" width: 100px;float: right; margin-top: 5px;" src="https://i.ibb.co/CWFcJjc/mby.png" alt="logo_mby"/>
       <ul>
         <li>Giá bán: <span id="taobao-gia-ban">200đ</span></li>
-        <li>Tỷ giá 1 ¥: <span id="taobao-ti-gia">3.480đ</span></li>
+        <li>Tỷ giá 1 ¥: <span id="taobao-ti-gia">${numberWithCommas(
+          globalRate
+        )}đ</span></li>
       </ul>
   
 
@@ -305,7 +367,10 @@ function main() {
     </div>
         `;
 
-  if (varientContainerTmall) {
+  domElementMountExtension.element.prepend(customActionsContainer);
+
+  if (domElementMountExtension.type === TAOBAO_TYPE.TMALL) {
+    updateTMallItemPrice(globalRate);
     // actions container
     const [purchaseButton, addToCartButton] =
       customActionsContainer.getElementsByTagName("button");
@@ -325,11 +390,8 @@ function main() {
         updateTMallItemPrice(globalRate);
       });
     });
-
-    varientContainerTmall.prepend(customActionsContainer);
-  }
-
-  if (varientContainerItem) {
+  } else if (domElementMountExtension.type === TAOBAO_TYPE.TAOBAO) {
+    updateTaobaoItemPrice(globalRate);
     // actions container
     const [purchaseButton, addToCartButton] =
       customActionsContainer.getElementsByTagName("button");
@@ -347,8 +409,6 @@ function main() {
         updateTaobaoItemPrice(globalRate);
       });
     });
-
-    varientContainerItem.prepend(customActionsContainer);
   }
 
   // token not found
@@ -361,5 +421,8 @@ function main() {
 }
 
 document.addEventListener("readystatechange", (event) => {
-  main();
+  fetchExchangeRate();
+  initExtensionInterval = setInterval(() => {
+    main();
+  }, 500);
 });
